@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Sistema de Pedidos</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Firebase -->
+  <script type="module" src="script.js" defer></script>
+</head>
+<body>
+  <div class="container">
+    <h1>📦 Sistema de Pedidos</h1>
+
+    <!-- Clientes -->
+    <section class="card">
+      <h2>👤 Clientes</h2>
+      <form id="clienteForm">
+        <input type="text" id="clienteNome" placeholder="Nome do cliente" required>
+        <button type="submit">Adicionar</button>
+      </form>
+      <ul id="clientesList"></ul>
+    </section>
+
+    <!-- Produtos -->
+    <section class="card">
+      <h2>📦 Produtos</h2>
+      <form id="produtoForm">
+        <input type="text" id="produtoNome" placeholder="Nome do produto" required>
+        <input type="number" id="produtoPreco" placeholder="Preço" required>
+        <button type="submit">Adicionar</button>
+      </form>
+      <ul id="produtosList"></ul>
+    </section>
+
+    <!-- Pedidos -->
+    <section class="card">
+      <h2>📝 Pedidos</h2>
+      <form id="pedidoForm">
+        <select id="pedidoCliente" required>
+          <option value="">Selecione um cliente</option>
+        </select>
+        <select id="pedidoProduto" required>
+          <option value="">Selecione um produto</option>
+        </select>
+        <label>
+          <input type="checkbox" id="pedidoPago"> Pago?
+        </label>
+        <button type="submit">Criar Pedido</button>
+      </form>
+      <ul id="pedidosList"></ul>
+    </section>
+  </div>
+</body>
+</html>
