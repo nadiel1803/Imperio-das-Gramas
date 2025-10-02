@@ -1,10 +1,10 @@
-// Importa Firebase
+// Import Firebase
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
 import {
   getFirestore, collection, addDoc, getDocs, deleteDoc, doc
 } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
 
-// CONFIG FIREBASE - substitua pelos seus dados do console Firebase
+// Config Firebase
 const firebaseConfig = {
   apiKey: "SUA_API_KEY",
   authDomain: "SEU_PROJECT_ID.firebaseapp.com",
@@ -18,13 +18,9 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 /* DOM */
-const clienteForm = document.getElementById("clienteForm");
-const produtoForm = document.getElementById("produtoForm");
-const pedidoForm = document.getElementById("pedidoForm");
-
-const clientesList = document.getElementById("clientesList");
-const produtosList = document.getElementById("produtosList");
-const pedidosList = document.getElementById("pedidosList");
+const clientesTable = document.getElementById("clientesTable");
+const produtosTable = document.getElementById("produtosTable");
+const pedidosTable = document.getElementById("pedidosTable");
 
 const pedidoCliente = document.getElementById("pedidoCliente");
 const pedidoProduto = document.getElementById("pedidoProduto");
@@ -35,20 +31,24 @@ const clientesRef = collection(db, "clientes");
 
 async function carregarClientes() {
   const snap = await getDocs(clientesRef);
-  clientesList.innerHTML = "";
+  clientesTable.innerHTML = "";
   pedidoCliente.innerHTML = '<option value="">Selecione um cliente</option>';
   snap.forEach((docu) => {
     const c = docu.data();
-    clientesList.innerHTML += `<li>${c.nome} <button onclick="removerCliente('${docu.id}')">❌</button></li>`;
+    clientesTable.innerHTML += `
+      <tr>
+        <td>${c.nome}</td>
+        <td><button onclick="removerCliente('${docu.id}')">Excluir</button></td>
+      </tr>`;
     pedidoCliente.innerHTML += `<option value="${c.nome}">${c.nome}</option>`;
   });
 }
 
-clienteForm.addEventListener("submit", async (e) => {
+document.getElementById("clienteForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const nome = document.getElementById("clienteNome").value;
   await addDoc(clientesRef, { nome });
-  clienteForm.reset();
+  e.target.reset();
   carregarClientes();
 });
 
@@ -62,21 +62,26 @@ const produtosRef = collection(db, "produtos");
 
 async function carregarProdutos() {
   const snap = await getDocs(produtosRef);
-  produtosList.innerHTML = "";
+  produtosTable.innerHTML = "";
   pedidoProduto.innerHTML = '<option value="">Selecione um produto</option>';
   snap.forEach((docu) => {
     const p = docu.data();
-    produtosList.innerHTML += `<li>${p.nome} - R$${p.preco} <button onclick="removerProduto('${docu.id}')">❌</button></li>`;
+    produtosTable.innerHTML += `
+      <tr>
+        <td>${p.nome}</td>
+        <td>R$${p.preco}</td>
+        <td><button onclick="removerProduto('${docu.id}')">Excluir</button></td>
+      </tr>`;
     pedidoProduto.innerHTML += `<option value="${p.nome}">${p.nome}</option>`;
   });
 }
 
-produtoForm.addEventListener("submit", async (e) => {
+document.getElementById("produtoForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const nome = document.getElementById("produtoNome").value;
   const preco = document.getElementById("produtoPreco").value;
   await addDoc(produtosRef, { nome, preco });
-  produtoForm.reset();
+  e.target.reset();
   carregarProdutos();
 });
 
@@ -90,20 +95,25 @@ const pedidosRef = collection(db, "pedidos");
 
 async function carregarPedidos() {
   const snap = await getDocs(pedidosRef);
-  pedidosList.innerHTML = "";
+  pedidosTable.innerHTML = "";
   snap.forEach((docu) => {
     const p = docu.data();
-    pedidosList.innerHTML += `<li>Cliente: ${p.cliente} | Produto: ${p.produto} | Pago: ${p.pago ? "✅" : "❌"}</li>`;
+    pedidosTable.innerHTML += `
+      <tr>
+        <td>${p.cliente}</td>
+        <td>${p.produto}</td>
+        <td>${p.pago ? "✅ Pago" : "❌ Pendente"}</td>
+      </tr>`;
   });
 }
 
-pedidoForm.addEventListener("submit", async (e) => {
+document.getElementById("pedidoForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const cliente = pedidoCliente.value;
   const produto = pedidoProduto.value;
   const pago = pedidoPago.checked;
   await addDoc(pedidosRef, { cliente, produto, pago });
-  pedidoForm.reset();
+  e.target.reset();
   carregarPedidos();
 });
 

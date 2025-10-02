@@ -2,40 +2,58 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Sistema de Pedidos</title>
+  <title>Gestor de Pedidos</title>
   <link rel="stylesheet" href="style.css">
-  <!-- Firebase -->
   <script type="module" src="script.js" defer></script>
 </head>
 <body>
-  <div class="container">
-    <h1>📦 Sistema de Pedidos</h1>
+  <header>
+    <h1>🛒 Gestor de Pedidos</h1>
+  </header>
 
-    <!-- Clientes -->
+  <main>
+    <!-- CLIENTES -->
     <section class="card">
       <h2>👤 Clientes</h2>
-      <form id="clienteForm">
+      <form id="clienteForm" class="form-inline">
         <input type="text" id="clienteNome" placeholder="Nome do cliente" required>
         <button type="submit">Adicionar</button>
       </form>
-      <ul id="clientesList"></ul>
+      <table>
+        <thead>
+          <tr>
+            <th>Nome</th>
+            <th>Ações</th>
+          </tr>
+        </thead>
+        <tbody id="clientesTable"></tbody>
+      </table>
     </section>
 
-    <!-- Produtos -->
+    <!-- PRODUTOS -->
     <section class="card">
       <h2>📦 Produtos</h2>
-      <form id="produtoForm">
+      <form id="produtoForm" class="form-inline">
         <input type="text" id="produtoNome" placeholder="Nome do produto" required>
         <input type="number" id="produtoPreco" placeholder="Preço" required>
         <button type="submit">Adicionar</button>
       </form>
-      <ul id="produtosList"></ul>
+      <table>
+        <thead>
+          <tr>
+            <th>Produto</th>
+            <th>Preço</th>
+            <th>Ações</th>
+          </tr>
+        </thead>
+        <tbody id="produtosTable"></tbody>
+      </table>
     </section>
 
-    <!-- Pedidos -->
+    <!-- PEDIDOS -->
     <section class="card">
       <h2>📝 Pedidos</h2>
-      <form id="pedidoForm">
+      <form id="pedidoForm" class="form-inline">
         <select id="pedidoCliente" required>
           <option value="">Selecione um cliente</option>
         </select>
@@ -43,12 +61,25 @@
           <option value="">Selecione um produto</option>
         </select>
         <label>
-          <input type="checkbox" id="pedidoPago"> Pago?
+          <input type="checkbox" id="pedidoPago"> Pago
         </label>
         <button type="submit">Criar Pedido</button>
       </form>
-      <ul id="pedidosList"></ul>
+      <table>
+        <thead>
+          <tr>
+            <th>Cliente</th>
+            <th>Produto</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="pedidosTable"></tbody>
+      </table>
     </section>
-  </div>
+  </main>
+
+  <footer>
+    <p>📊 Sistema de gestão interativo - Império Das Gramas</p>
+  </footer>
 </body>
 </html>
