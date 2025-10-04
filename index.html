@@ -1,85 +1,199 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <title>Gestor de Pedidos</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Gerenciador de Pedidos</title>
+
+  <!-- Link do CSS externo -->
   <link rel="stylesheet" href="style.css">
-  <script type="module" src="script.js" defer></script>
 </head>
 <body>
-  <header>
-    <h1>🛒 Gestor de Pedidos</h1>
+  <!-- LOGIN POR PIN (overlay) -->
+  <div id="pinModal" class="modal-backdrop" aria-hidden="false">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pinTitle">
+      <h2 id="pinTitle">Entrar — PIN de 4 dígitos</h2>
+      <p>Insira o PIN para abrir o gerenciador.</p>
+      <div class="pin-inputs">
+        <input type="password" id="pinInput" inputmode="numeric" maxlength="4" autocomplete="one-time-code" aria-label="PIN de 4 dígitos">
+      </div>
+      <div class="modal-actions">
+        <button id="pinSubmit" class="btn">Entrar</button>
+      </div>
+      <div id="pinError" role="status" aria-live="polite" hidden></div>
+    </div>
+  </div>
+
+  <!-- CABEÇALHO -->
+  <header id="appHeader">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">R2</div>
+      <div class="brand-text">
+        <h1 id="appTitle">Gerenciador de Pedidos</h1>
+        <div id="currentDayLabel" class="subtitle" aria-live="polite">Dia atual</div>
+      </div>
+    </div>
+
+    <div class="top-controls">
+      <button id="openAddOrderBtn" class="btn" aria-haspopup="dialog">Adicionar pedido</button>
+      <button id="openProductsBtn" class="btn ghost">Produtos</button>
+      <button id="openClientsBtn" class="btn ghost">Clientes</button>
+      <div class="sort-controls">
+        <label for="sortDirection">Ordenar:</label>
+        <select id="sortDirection" name="sortDirection" aria-label="Ordenar">
+          <option value="desc">Mais recentes</option>
+          <option value="asc">Mais antigos</option>
+        </select>
+      </div>
+    </div>
   </header>
 
-  <main>
-    <!-- CLIENTES -->
-    <section class="card">
-      <h2>👤 Clientes</h2>
-      <form id="clienteForm" class="form-inline">
-        <input type="text" id="clienteNome" placeholder="Nome do cliente" required>
-        <button type="submit">Adicionar</button>
-      </form>
-      <table>
-        <thead>
-          <tr>
-            <th>Nome</th>
-            <th>Ações</th>
-          </tr>
-        </thead>
-        <tbody id="clientesTable"></tbody>
-      </table>
+  <main class="container" id="mainApp" tabindex="-1">
+    <!-- AREA DO CALENDÁRIO -->
+    <section id="calendarArea" class="calendar">
+      <h2>Calendário</h2>
+      <div id="calendar"></div>
+      <div class="calendar-quick">
+        <button id="gotoTodayBtn" class="btn ghost">Hoje</button>
+        <button id="prevDayBtn" class="btn ghost" aria-label="Dia anterior">◀</button>
+        <button id="nextDayBtn" class="btn ghost" aria-label="Próximo dia">▶</button>
+      </div>
     </section>
 
-    <!-- PRODUTOS -->
-    <section class="card">
-      <h2>📦 Produtos</h2>
-      <form id="produtoForm" class="form-inline">
-        <input type="text" id="produtoNome" placeholder="Nome do produto" required>
-        <input type="number" id="produtoPreco" placeholder="Preço" required>
-        <button type="submit">Adicionar</button>
-      </form>
-      <table>
-        <thead>
-          <tr>
-            <th>Produto</th>
-            <th>Preço</th>
-            <th>Ações</th>
-          </tr>
-        </thead>
-        <tbody id="produtosTable"></tbody>
-      </table>
-    </section>
+    <!-- AREA DE PEDIDOS -->
+    <section id="ordersArea" class="orders-panel">
+      <div class="orders-header">
+        <h2 id="ordersTitle">Pedidos — <span id="ordersDayLabel">Hoje</span></h2>
+        <div class="orders-controls">
+          <input type="search" id="ordersSearch" placeholder="Pesquisar pedidos" aria-label="Pesquisar pedidos">
+        </div>
+      </div>
 
-    <!-- PEDIDOS -->
-    <section class="card">
-      <h2>📝 Pedidos</h2>
-      <form id="pedidoForm" class="form-inline">
-        <select id="pedidoCliente" required>
-          <option value="">Selecione um cliente</option>
-        </select>
-        <select id="pedidoProduto" required>
-          <option value="">Selecione um produto</option>
-        </select>
-        <label>
-          <input type="checkbox" id="pedidoPago"> Pago
-        </label>
-        <button type="submit">Criar Pedido</button>
-      </form>
-      <table>
-        <thead>
-          <tr>
-            <th>Cliente</th>
-            <th>Produto</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody id="pedidosTable"></tbody>
-      </table>
+      <div id="ordersList" class="orders-list" aria-live="polite">
+        <!-- Pedidos renderizados via JS -->
+      </div>
+
+      <div id="emptyState" class="empty-state" hidden>
+        <p>Nenhum pedido encontrado.</p>
+      </div>
     </section>
   </main>
 
-  <footer>
-    <p>📊 Sistema de gestão interativo - Império Das Gramas</p>
-  </footer>
+  <!-- MODAL DE PEDIDOS -->
+  <div id="orderModalBackdrop" class="modal-backdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="orderModalTitle">
+      <h2 id="orderModalTitle">Adicionar Pedido</h2>
+      <form id="orderForm">
+        <fieldset>
+          <label for="orderDate">Data</label>
+          <input type="date" id="orderDate" name="date" required>
+
+          <label for="orderTime">Horário</label>
+          <input type="time" id="orderTime" name="time" required>
+
+          <label for="orderClient">Cliente</label>
+          <div class="client-select-row">
+            <select id="orderClient" name="client" required></select>
+            <button type="button" id="addClientQuickBtn" class="btn ghost">+ Cliente</button>
+          </div>
+
+          <label for="orderItems">Itens do pedido</label>
+          <div id="orderItemsContainer"></div>
+          <div class="items-actions">
+            <button type="button" id="openProductsFromOrderBtn" class="btn ghost">Gerenciar produtos</button>
+            <button type="button" id="addCustomItemBtn" class="btn ghost">Adicionar item</button>
+          </div>
+
+          <label for="paymentMethod">Forma de pagamento</label>
+          <select id="paymentMethod" name="paymentMethod" required>
+            <option value="dinheiro">Dinheiro</option>
+            <option value="pix">PIX</option>
+            <option value="cartao">Cartão</option>
+            <option value="outros">Outros</option>
+          </select>
+
+          <label for="orderTotal">Valor total</label>
+          <input type="text" id="orderTotal" name="orderTotal" readonly value="0.00">
+
+          <label for="orderPaid">Pago?</label>
+          <input type="checkbox" id="orderPaid" name="paid">
+
+          <input type="hidden" id="orderId" name="orderId">
+        </fieldset>
+
+        <div class="modal-actions">
+          <button type="submit" id="saveOrderBtn" class="btn">Salvar</button>
+          <button type="button" id="cancelOrderBtn" class="btn ghost">Cancelar</button>
+          <button type="button" id="deleteOrderBtn" class="btn danger" hidden>Excluir</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL DE PRODUTOS -->
+  <div id="productsModalBackdrop" class="modal-backdrop" hidden>
+    <div class="modal">
+      <h2>Produtos</h2>
+      <form id="productForm">
+        <label for="productName">Nome do produto</label>
+        <input type="text" id="productName" required>
+
+        <label for="productPrice">Valor</label>
+        <input type="number" id="productPrice" step="0.01" required>
+
+        <input type="hidden" id="productId">
+        <div class="modal-actions">
+          <button type="submit" class="btn">Salvar</button>
+          <button type="button" id="cancelProductBtn" class="btn ghost">Cancelar</button>
+        </div>
+      </form>
+      <hr>
+      <div id="productsList" class="list"></div>
+    </div>
+  </div>
+
+  <!-- MODAL DE CLIENTES -->
+  <div id="clientsModalBackdrop" class="modal-backdrop" hidden>
+    <div class="modal">
+      <h2>Clientes</h2>
+      <form id="clientForm">
+        <label for="clientName">Nome</label>
+        <input type="text" id="clientName" required>
+
+        <label for="clientPhone">Telefone</label>
+        <input type="tel" id="clientPhone" required placeholder="(99) 99999-9999">
+
+        <input type="hidden" id="clientId">
+        <div class="modal-actions">
+          <button type="submit" class="btn">Salvar</button>
+          <button type="button" id="cancelClientBtn" class="btn ghost">Cancelar</button>
+        </div>
+      </form>
+      <hr>
+      <div id="clientsList" class="list"></div>
+    </div>
+  </div>
+
+  <!-- Template de pedido -->
+  <template id="orderCardTemplate">
+    <article class="order-card" data-order-id="">
+      <div class="order-left">
+        <div class="order-title"><strong class="order-time"></strong> — <span class="order-client"></span></div>
+        <div class="order-meta">
+          <span class="order-items-count"></span> • <span class="order-phone"></span>
+        </div>
+      </div>
+      <div class="order-right">
+        <div class="order-price">R$ <span class="order-value">0.00</span></div>
+        <div class="order-actions">
+          <button class="edit-order-btn btn ghost">Editar</button>
+          <button class="delete-order-btn btn ghost">Excluir</button>
+        </div>
+      </div>
+    </article>
+  </template>
+
+  <!-- Script principal -->
+  <script src="app.js"></script>
 </body>
 </html>
