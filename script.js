@@ -9,7 +9,7 @@
  *
  * ALTERE AQUI: PIN de 4 dígitos:
  *******************************/
-const PIN_CODE = "1234"; // <<-- muda aqui pro PIN que quiser (4 dígitos)
+const PIN_CODE = "4901"; // <<-- muda aqui pro PIN que quiser (4 dígitos)
 
 /* ------------------------
    Keys do localStorage
