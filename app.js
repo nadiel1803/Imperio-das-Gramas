@@ -1,212 +1,265 @@
-/*******************************
- * app.js
- * Gerenciador de Pedidos - principal
- * - PIN de acesso
- * - CRUD Produtos / Clientes / Pedidos
- * - Calendário interativo (filtra por data)
- * - Ordenação por horário (asc/desc)
- * - Proteção contra perda de dados (beforeunload + confirmações)
+/**
+ * app.js - Gerenciador Clientes / Produtos / Pedidos (com Firestore)
+ * - Usa `window.initFirebase()` (definido em firebase.js) se o firebase estiver configurado
+ * - NÃO usa Auth (assume DB aberto)
+ * - Persistência local em localStorage como fallback / espelho
  *
- * ALTERE AQUI: PIN de 4 dígitos:
- *******************************/
-const PIN_CODE = "4901"; // <<-- muda aqui pro PIN que quiser (4 dígitos)
+ * Coloque este arquivo junto com index.html e firebase.js
+ */
 
-/* ------------------------
-   Keys do localStorage
-   ------------------------ */
+/////////////////////// CONFIG ///////////////////////
+const PIN_CODE = "4901"; // editar se quiser
 const LS_KEYS = {
   products: "gp_products_v1",
   clients: "gp_clients_v1",
   orders: "gp_orders_v1",
 };
 
-/* ------------------------
-   Estado em memória
-   ------------------------ */
+/////////////////////// ESTADO ///////////////////////
 let products = [];
 let clients = [];
-let orders = []; // cada order: { id, date (YYYY-MM-DD), time (HH:MM), items: [{id,name,price,qty}], clientId, clientName, clientPhone, paymentMethod, total, paid }
-let selectedDate = todayISO();
+let orders = [];
+let selectedDate = null;
 let formDirty = false;
 
-/* ------------------------
-   Utilitários
-   ------------------------ */
-function uid(prefix = "") {
-  return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-}
-function moneyFormat(n) {
-  return Number(n || 0).toFixed(2);
-}
-function todayISO() {
-  const d = new Date();
-  return d.toISOString().slice(0, 10);
-}
-function clamp(val, min, max) {
-  return Math.max(min, Math.min(max, val));
-}
+// firebaseApi (populado por window.initFirebase())
+let firebaseApi = null;
+let firebaseUnsubs = { products: null, clients: null, orders: null };
 
-/* ------------------------
-   Carregamento / Persistência
-   ------------------------ */
-function loadAll() {
-  try {
-    products = JSON.parse(localStorage.getItem(LS_KEYS.products) || "[]");
-  } catch (e) { products = []; }
+/////////////////////// UTIL ///////////////////////
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
-  try {
-    clients = JSON.parse(localStorage.getItem(LS_KEYS.clients) || "[]");
-  } catch (e) { clients = []; }
+function uid(prefix = "") { return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+function moneyFormat(n){ return Number(n || 0).toFixed(2); }
+function todayISO(){ return new Date().toISOString().slice(0,10); }
+function escapeHtml(s){ return String(s||"").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[m])); }
 
-  try {
-    orders = JSON.parse(localStorage.getItem(LS_KEYS.orders) || "[]");
-  } catch (e) { orders = []; }
+/////////////////////// PERSISTÊNCIA LOCAL ///////////////////////
+function loadAllLocal(){
+  try{ products = JSON.parse(localStorage.getItem(LS_KEYS.products) || "[]"); } catch(e){ products = []; }
+  try{ clients = JSON.parse(localStorage.getItem(LS_KEYS.clients) || "[]"); } catch(e){ clients = []; }
+  try{ orders = JSON.parse(localStorage.getItem(LS_KEYS.orders) || "[]"); } catch(e){ orders = []; }
 }
-
-function saveAll() {
+function saveAllLocal(){
   localStorage.setItem(LS_KEYS.products, JSON.stringify(products));
   localStorage.setItem(LS_KEYS.clients, JSON.stringify(clients));
   localStorage.setItem(LS_KEYS.orders, JSON.stringify(orders));
-  // optional: try to push to firebase if available
-  if (window.firebaseSync && typeof window.firebaseSync === "function") {
-    try { window.firebaseSync({ products, clients, orders }); } catch(e){ console.warn("Firebase sync failed:", e); }
-  }
 }
 
-/* ------------------------
-   DOM references
-   ------------------------ */
+/////////////////////// DOM REFS ///////////////////////
 const els = {
-  pinModal: document.getElementById("pinModal"),
-  pinInput: document.getElementById("pinInput"),
-  pinSubmit: document.getElementById("pinSubmit"),
-  pinError: document.getElementById("pinError"),
+  pinModal: $("#pinModal"),
+  pinInput: $("#pinInput"),
+  pinSubmit: $("#pinSubmit"),
+  pinError: $("#pinError"),
 
-  openAddOrderBtn: document.getElementById("openAddOrderBtn"),
-  openProductsBtn: document.getElementById("openProductsBtn"),
-  openClientsBtn: document.getElementById("openClientsBtn"),
-  sortDirection: document.getElementById("sortDirection"),
-  ordersSearch: document.getElementById("ordersSearch"),
+  openAddOrderBtn: $("#openAddOrderBtn"),
+  openProductsBtn: $("#openProductsBtn"),
+  openClientsBtn: $("#openClientsBtn"),
+  sortDirection: $("#sortDirection"),
+  ordersSearch: $("#ordersSearch"),
 
-  ordersList: document.getElementById("ordersList"),
-  ordersDayLabel: document.getElementById("ordersDayLabel"),
-  ordersTitle: document.getElementById("ordersTitle"),
-  orderCardTemplate: document.getElementById("orderCardTemplate"),
+  ordersList: $("#ordersList"),
+  ordersDayLabel: $("#ordersDayLabel"),
+  orderCardTemplate: $("#orderCardTemplate"),
 
-  gotoTodayBtn: document.getElementById("gotoTodayBtn"),
-  prevDayBtn: document.getElementById("prevDayBtn"),
-  nextDayBtn: document.getElementById("nextDayBtn"),
-  calendar: document.getElementById("calendar"),
-  currentDayLabel: document.getElementById("currentDayLabel"),
+  gotoTodayBtn: $("#gotoTodayBtn"),
+  prevDayBtn: $("#prevDayBtn"),
+  nextDayBtn: $("#nextDayBtn"),
+  calendar: $("#calendar"),
+  currentDayLabel: $("#currentDayLabel"),
 
-  orderModalBackdrop: document.getElementById("orderModalBackdrop"),
-  orderForm: document.getElementById("orderForm"),
-  orderDate: document.getElementById("orderDate"),
-  orderTime: document.getElementById("orderTime"),
-  orderClient: document.getElementById("orderClient"),
-  addClientQuickBtn: document.getElementById("addClientQuickBtn"),
-  orderItemsContainer: document.getElementById("orderItemsContainer"),
-  openProductsFromOrderBtn: document.getElementById("openProductsFromOrderBtn"),
-  addCustomItemBtn: document.getElementById("addCustomItemBtn"),
-  paymentMethod: document.getElementById("paymentMethod"),
-  orderTotal: document.getElementById("orderTotal"),
-  orderPaid: document.getElementById("orderPaid"),
-  orderId: document.getElementById("orderId"),
-  saveOrderBtn: document.getElementById("saveOrderBtn"),
-  cancelOrderBtn: document.getElementById("cancelOrderBtn"),
-  deleteOrderBtn: document.getElementById("deleteOrderBtn"),
+  orderModalBackdrop: $("#orderModalBackdrop"),
+  orderForm: $("#orderForm"),
+  orderDate: $("#orderDate"),
+  orderTime: $("#orderTime"),
+  orderClient: $("#orderClient"),
+  addClientQuickBtn: $("#addClientQuickBtn"),
+  orderItemsContainer: $("#orderItemsContainer"),
+  openProductsFromOrderBtn: $("#openProductsFromOrderBtn"),
+  addCustomItemBtn: $("#addCustomItemBtn"),
+  paymentMethod: $("#paymentMethod"),
+  orderTotal: $("#orderTotal"),
+  orderPaid: $("#orderPaid"),
+  orderId: $("#orderId"),
+  saveOrderBtn: $("#saveOrderBtn"),
+  cancelOrderBtn: $("#cancelOrderBtn"),
+  deleteOrderBtn: $("#deleteOrderBtn"),
 
-  productsModalBackdrop: document.getElementById("productsModalBackdrop"),
-  productForm: document.getElementById("productForm"),
-  productName: document.getElementById("productName"),
-  productPrice: document.getElementById("productPrice"),
-  productId: document.getElementById("productId"),
-  productsList: document.getElementById("productsList"),
-  cancelProductBtn: document.getElementById("cancelProductBtn"),
+  productsModalBackdrop: $("#productsModalBackdrop"),
+  productForm: $("#productForm"),
+  productName: $("#productName"),
+  productPrice: $("#productPrice"),
+  productId: $("#productId"),
+  productsList: $("#productsList"),
+  cancelProductBtn: $("#cancelProductBtn"),
 
-  clientsModalBackdrop: document.getElementById("clientsModalBackdrop"),
-  clientForm: document.getElementById("clientForm"),
-  clientName: document.getElementById("clientName"),
-  clientPhone: document.getElementById("clientPhone"),
-  clientId: document.getElementById("clientId"),
-  clientsList: document.getElementById("clientsList"),
-  cancelClientBtn: document.getElementById("cancelClientBtn"),
+  clientsModalBackdrop: $("#clientsModalBackdrop"),
+  clientForm: $("#clientForm"),
+  clientName: $("#clientName"),
+  clientPhone: $("#clientPhone"),
+  clientId: $("#clientId"),
+  clientsList: $("#clientsList"),
+  cancelClientBtn: $("#cancelClientBtn"),
 
-  emptyState: document.getElementById("emptyState"),
+  showClientsListBtn: $("#showClientsListBtn"),
+  showProductsListBtn: $("#showProductsListBtn"),
+
+  emptyState: $("#emptyState"),
 };
 
-/* ------------------------
-   Inicialização UI e eventos
-   ------------------------ */
-function init() {
-  loadAll();
-  bindAuth();
+/////////////////////// INICIALIZAÇÃO ///////////////////////
+function init(){
+  loadAllLocal();
+  bindAuth();   // PIN
   bindUI();
   renderCalendar();
   renderClientsOptions();
   renderProductsListUI();
   renderClientsListUI();
   renderOrdersList();
-  updateCurrentLabels();
-  // always start showing today's date
   selectedDate = todayISO();
   setSelectedDate(selectedDate);
-  // protect from accidental leave if form dirty
-  window.addEventListener("beforeunload", (e) => {
-    if (formDirty) {
-      e.preventDefault();
-      e.returnValue = "";
-    }
-  });
+  window.addEventListener("beforeunload", (e)=>{ if (formDirty){ e.preventDefault(); e.returnValue = ""; }});
 }
+window.addEventListener("load", init);
 
-/* ------------------------
-   AUTH (PIN)
-   ------------------------ */
-function bindAuth() {
-  // show PIN overlay
+/////////////////////// AUTH (PIN) ///////////////////////
+function bindAuth(){
   showPin(true);
   els.pinSubmit.addEventListener("click", tryPin);
-  els.pinInput.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") tryPin();
-  });
-  // focus
+  els.pinInput.addEventListener("keydown", ev => { if(ev.key === "Enter") tryPin(); });
   setTimeout(()=>els.pinInput.focus(), 300);
 }
-
-function showPin(show = true) {
-  if (show) {
-    els.pinModal.setAttribute("aria-hidden", "false");
-    els.pinModal.style.display = "flex";
-  } else {
-    els.pinModal.setAttribute("aria-hidden", "true");
-    els.pinModal.style.display = "none";
-  }
+function showPin(show = true){
+  if (show){ els.pinModal.setAttribute("aria-hidden","false"); els.pinModal.style.display = "flex"; }
+  else { els.pinModal.setAttribute("aria-hidden","true"); els.pinModal.style.display = "none"; }
 }
 
-function tryPin() {
-  const val = (els.pinInput.value || "").trim();
-  if (val === PIN_CODE) {
-    // success
+async function tryPin(){
+  const v = (els.pinInput.value || "").trim();
+  if (v === PIN_CODE){
     showPin(false);
     els.pinInput.value = "";
     els.pinError.hidden = true;
-    // initialize firebase if exists
+
+    // tenta inicializar firebase se disponível (window.initFirebase definida em firebase.js)
     if (window.initFirebase && typeof window.initFirebase === "function") {
-      try { window.initFirebase(); } catch(e) { console.warn("initFirebase error", e); }
+      try {
+        firebaseApi = await window.initFirebase(); // initFirebase já faz throw se config vazio
+        console.log("Firebase inicializado via firebase.js — integrando listeners...");
+        attachFirebaseListeners();
+        // tenta sincronizar local -> remote se collections remotas vazias
+        tryLocalToRemoteSync();
+      } catch(err) {
+        // se falhar, continua com localStorage sem quebrar
+        console.warn("initFirebase falhou (seguindo com localStorage):", err);
+        firebaseApi = null;
+      }
+    } else {
+      console.log("firebase.js não encontrado ou initFirebase não disponível — usando localStorage.");
     }
+
   } else {
     els.pinError.hidden = false;
     els.pinError.textContent = "PIN incorreto — tenta de novo.";
-    els.pinInput.value = "";
-    els.pinInput.focus();
+    els.pinInput.value = ""; els.pinInput.focus();
   }
 }
 
-/* ------------------------
-   UI bind
-   ------------------------ */
-function bindUI() {
+/////////////////////// FIRESTORE LISTENERS ///////////////////////
+function attachFirebaseListeners(){
+  if (!firebaseApi) return;
+
+  // unsub anterior
+  if (firebaseUnsubs.products) firebaseUnsubs.products();
+  if (firebaseUnsubs.clients) firebaseUnsubs.clients();
+  if (firebaseUnsubs.orders) firebaseUnsubs.orders();
+
+  // products
+  firebaseUnsubs.products = firebaseApi.onCollectionSnapshot("products", (err, docs) => {
+    if (err){ console.warn("products snapshot error", err); return; }
+    products = docs.map(d => ({ id: d.id, name: d.name, price: Number(d.price || 0) }));
+    saveAllLocal();
+    renderProductsListUI();
+    renderClientsOptions();
+    renderOrderItemsUI();
+  });
+
+  // clients
+  firebaseUnsubs.clients = firebaseApi.onCollectionSnapshot("clients", (err, docs) => {
+    if (err){ console.warn("clients snapshot error", err); return; }
+    clients = docs.map(d => ({ id: d.id, name: d.name, phone: d.phone || "" }));
+    saveAllLocal();
+    renderClientsListUI();
+    renderClientsOptions();
+    renderOrdersList();
+  });
+
+  // orders
+  firebaseUnsubs.orders = firebaseApi.onCollectionSnapshot("orders", (err, docs) => {
+    if (err){ console.warn("orders snapshot error", err); return; }
+    orders = docs.map(d => ({
+      id: d.id,
+      date: d.date || todayISO(),
+      time: d.time || "",
+      clientId: d.clientId || "",
+      items: d.items || [],
+      total: Number(d.total || 0),
+      paid: !!d.paid
+    }));
+    saveAllLocal();
+    renderOrdersList();
+  });
+}
+
+/////////////////////// SYNC LOCAL -> REMOTE (ONE-TIME IF REMOTE EMPTY) ///////////////////////
+async function tryLocalToRemoteSync(){
+  if (!firebaseApi) return;
+  try {
+    const remoteProds = await firebaseApi.getAll("products");
+    const remoteClients = await firebaseApi.getAll("clients");
+    const remoteOrders = await firebaseApi.getAll("orders");
+
+    // products
+    if ((!remoteProds || remoteProds.length === 0) && products && products.length > 0) {
+      for (const p of products) {
+        // remove id local (server generates id)
+        const payload = { name: p.name, price: Number(p.price || 0) };
+        try { await firebaseApi.add("products", payload); } catch(e){ console.warn("sync product fail", e); }
+      }
+    }
+
+    // clients
+    if ((!remoteClients || remoteClients.length === 0) && clients && clients.length > 0) {
+      for (const c of clients) {
+        const payload = { name: c.name, phone: c.phone || "" };
+        try { await firebaseApi.add("clients", payload); } catch(e){ console.warn("sync client fail", e); }
+      }
+    }
+
+    // orders
+    if ((!remoteOrders || remoteOrders.length === 0) && orders && orders.length > 0) {
+      for (const o of orders) {
+        const payload = {
+          date: o.date || todayISO(),
+          time: o.time || "",
+          clientId: o.clientId || "",
+          items: o.items || [],
+          total: Number(o.total || 0),
+          paid: !!o.paid,
+          createdAt: new Date().toISOString()
+        };
+        try { await firebaseApi.add("orders", payload); } catch(e){ console.warn("sync order fail", e); }
+      }
+    }
+
+  } catch(e){ console.warn("tryLocalToRemoteSync error", e); }
+}
+
+/////////////////////// UI BINDINGS ///////////////////////
+function bindUI(){
   els.openAddOrderBtn.addEventListener("click", () => openOrderModalForCreate());
   els.openProductsBtn.addEventListener("click", () => toggleModal(els.productsModalBackdrop, true));
   els.openClientsBtn.addEventListener("click", () => toggleModal(els.clientsModalBackdrop, true));
@@ -215,10 +268,9 @@ function bindUI() {
   els.prevDayBtn.addEventListener("click", () => changeSelectedDate(-1));
   els.nextDayBtn.addEventListener("click", () => changeSelectedDate(1));
 
-  els.sortDirection.addEventListener("change", renderOrdersList);
-  els.ordersSearch.addEventListener("input", renderOrdersList);
+  els.sortDirection && els.sortDirection.addEventListener("change", renderOrdersList);
+  els.ordersSearch && els.ordersSearch.addEventListener("input", renderOrdersList);
 
-  // order modal events
   els.openProductsFromOrderBtn.addEventListener("click", () => toggleModal(els.productsModalBackdrop, true));
   els.addCustomItemBtn.addEventListener("click", addCustomItemToOrderUI);
   els.addClientQuickBtn.addEventListener("click", () => toggleModal(els.clientsModalBackdrop, true));
@@ -226,68 +278,55 @@ function bindUI() {
   els.orderForm.addEventListener("input", () => { formDirty = true; });
   els.orderForm.addEventListener("submit", (e) => { e.preventDefault(); saveOrderFromForm(); });
 
-  // product events
-  els.productForm.addEventListener("submit", (e) => { e.preventDefault(); saveProductFromForm(); });
-  els.cancelProductBtn.addEventListener("click", () => closeProductsModal());
+  els.productForm.addEventListener("submit", (e)=>{ e.preventDefault(); saveProductFromForm(); });
+  els.cancelProductBtn.addEventListener("click", ()=> closeProductsModal());
 
-  // client events
-  els.clientForm.addEventListener("submit", (e) => { e.preventDefault(); saveClientFromForm(); });
-  els.cancelClientBtn.addEventListener("click", () => closeClientsModal());
+  els.clientForm.addEventListener("submit", (e)=>{ e.preventDefault(); saveClientFromForm(); });
+  els.cancelClientBtn.addEventListener("click", ()=> closeClientsModal());
+
+  els.showClientsListBtn && els.showClientsListBtn.addEventListener("click", ()=> { toggleModal(els.clientsModalBackdrop, true); });
+  els.showProductsListBtn && els.showProductsListBtn.addEventListener("click", ()=> { toggleModal(els.productsModalBackdrop, true); });
 }
 
-/* ------------------------
-   MODAL helpers
-   ------------------------ */
-function toggleModal(modalEl, show = true) {
+/////////////////////// MODAIS ///////////////////////
+function toggleModal(modalEl, show = true){
   if (!modalEl) return;
-  if (show) {
-    modalEl.hidden = false;
-    modalEl.style.display = "flex";
-  } else {
-    modalEl.hidden = true;
-    modalEl.style.display = "none";
-  }
+  if (show){ modalEl.hidden = false; modalEl.style.display = "flex"; }
+  else { modalEl.hidden = true; modalEl.style.display = "none"; }
 }
-
-function closeOrderModalWithCheck() {
-  if (formDirty) {
+function closeOrderModalWithCheck(){
+  if (formDirty){
     if (!confirm("Existem alterações não salvas. Tem certeza que quer fechar?")) return;
   }
   closeOrderModal();
 }
-
-function closeOrderModal() {
+function closeOrderModal(){
   toggleModal(els.orderModalBackdrop, false);
   resetOrderForm();
   formDirty = false;
   els.deleteOrderBtn.hidden = true;
 }
-
-function resetOrderForm() {
+function resetOrderForm(){
   els.orderForm.reset();
   els.orderItemsContainer.innerHTML = "";
   els.orderTotal.value = "0.00";
   els.orderId.value = "";
 }
 
-/* ------------------------
-   PRODUCTS CRUD (UI + storage)
-   ------------------------ */
-function renderProductsListUI() {
+/////////////////////// RENDER UI ///////////////////////
+function renderProductsListUI(){
   els.productsList.innerHTML = "";
-  if (!products.length) {
+  if (!products.length){
     els.productsList.innerHTML = `<div class="list-item">Nenhum produto cadastrado.</div>`;
     return;
   }
-  products.forEach(p => {
+  products.forEach(p=>{
     const div = document.createElement("div");
     div.className = "list-item";
     div.innerHTML = `
-      <div style="display:flex;gap:12px;align-items:center">
-        <div>
-          <div style="font-weight:600">${escapeHtml(p.name)}</div>
-          <div style="font-size:0.85rem;color:var(--muted)">R$ ${moneyFormat(p.price)}</div>
-        </div>
+      <div>
+        <div style="font-weight:600">${escapeHtml(p.name)}</div>
+        <div style="font-size:0.85rem;color:var(--muted)">R$ ${moneyFormat(p.price)}</div>
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn ghost edit-product" data-id="${p.id}">Editar</button>
@@ -296,47 +335,30 @@ function renderProductsListUI() {
     `;
     els.productsList.appendChild(div);
   });
-  // bind edit/delete
-  Array.from(els.productsList.querySelectorAll(".edit-product")).forEach(b => b.addEventListener("click", (ev) => {
-    const id = ev.currentTarget.dataset.id;
-    openProductForEdit(id);
+  Array.from(els.productsList.querySelectorAll(".edit-product")).forEach(b => b.addEventListener("click", ev=>{
+    openProductForEdit(ev.currentTarget.dataset.id);
   }));
-  Array.from(els.productsList.querySelectorAll(".delete-product")).forEach(b => b.addEventListener("click", (ev) => {
+  Array.from(els.productsList.querySelectorAll(".delete-product")).forEach(b => b.addEventListener("click", ev=>{
     const id = ev.currentTarget.dataset.id;
-    if (confirm("Excluir produto? Isso não removerá itens já salvos nos pedidos existentes.")) {
-      products = products.filter(x => x.id !== id);
-      saveAll(); renderProductsListUI(); renderOrderItemsUI(); renderOrdersList();
-    }
+    if (!confirm("Excluir produto? Pedidos existentes manterão os dados antigos.")) return;
+    // delete locally
+    products = products.filter(x => x.id !== id);
+    saveAllLocal();
+    // delete remotely
+    if (firebaseApi) firebaseApi.delete("products", id).catch(e => console.warn("firebase delete product", e));
+    renderProductsListUI();
+    renderOrderItemsUI();
+    renderOrdersList();
   }));
 }
 
-function saveProductFromForm() {
-  const name = (els.productName.value || "").trim();
-  const price = Number(els.productPrice.value || 0);
-  if (!name || price < 0) { alert("Preencha nome e preço válidos."); return; }
-  const id = els.productId.value || uid("prod_");
-  const existingIndex = products.findIndex(p => p.id === id);
-  const obj = { id, name, price: Number(price) };
-  if (existingIndex >= 0) products[existingIndex] = obj; else products.push(obj);
-  saveAll();
-  renderProductsListUI();
-  renderClientsOptions();
-  toggleModal(els.productsModalBackdrop, false);
-  els.productForm.reset();
-  els.productId.value = "";
-  renderOrderItemsUI();
-}
-
-/* ------------------------
-   CLIENTS CRUD (UI + storage)
-   ------------------------ */
-function renderClientsListUI() {
+function renderClientsListUI(){
   els.clientsList.innerHTML = "";
-  if (!clients.length) {
+  if (!clients.length){
     els.clientsList.innerHTML = `<div class="list-item">Nenhum cliente cadastrado.</div>`;
     return;
   }
-  clients.forEach(c => {
+  clients.forEach(c=>{
     const div = document.createElement("div");
     div.className = "list-item";
     div.innerHTML = `
@@ -351,572 +373,330 @@ function renderClientsListUI() {
     `;
     els.clientsList.appendChild(div);
   });
-  Array.from(els.clientsList.querySelectorAll(".edit-client")).forEach(b => b.addEventListener("click", (ev) => {
-    const id = ev.currentTarget.dataset.id;
-    openClientForEdit(id);
+  Array.from(els.clientsList.querySelectorAll(".edit-client")).forEach(b => b.addEventListener("click", ev=>{
+    openClientForEdit(ev.currentTarget.dataset.id);
   }));
-  Array.from(els.clientsList.querySelectorAll(".delete-client")).forEach(b => b.addEventListener("click", (ev) => {
+  Array.from(els.clientsList.querySelectorAll(".delete-client")).forEach(b => b.addEventListener("click", ev=>{
     const id = ev.currentTarget.dataset.id;
-    if (!confirm("Excluir cliente? Pedidos existentes não terão o cliente removido automaticamente.")) return;
+    if (!confirm("Excluir cliente? Pedidos existentes manterão os dados antigos.")) return;
     clients = clients.filter(x => x.id !== id);
-    saveAll();
+    saveAllLocal();
+    if (firebaseApi) firebaseApi.delete("clients", id).catch(e=>console.warn("firebase delete client", e));
     renderClientsListUI();
     renderClientsOptions();
     renderOrdersList();
   }));
 }
 
-function saveClientFromForm() {
-  const name = (els.clientName.value || "").trim();
-  const phone = (els.clientPhone.value || "").trim();
-  if (!name) { alert("Nome do cliente é obrigatório."); return; }
-  const id = els.clientId.value || uid("cli_");
-  const existingIndex = clients.findIndex(c => c.id === id);
-  const obj = { id, name, phone };
-  if (existingIndex >= 0) clients[existingIndex] = obj; else clients.push(obj);
-  saveAll();
-  renderClientsListUI();
-  renderClientsOptions();
-  toggleModal(els.clientsModalBackdrop, false);
-  els.clientForm.reset();
-  els.clientId.value = "";
-}
-
-function openClientForEdit(id) {
-  const c = clients.find(x => x.id === id);
-  if (!c) return;
-  els.clientName.value = c.name;
-  els.clientPhone.value = c.phone;
-  els.clientId.value = c.id;
-  toggleModal(els.clientsModalBackdrop, true);
-}
-
-/* ------------------------
-   Helpers UI: options and items rendering in order modal
-   ------------------------ */
-function renderClientsOptions() {
-  // populate select used in order form
+function renderClientsOptions(){
+  // dropdown no modal de pedido
+  if (!els.orderClient) return;
   els.orderClient.innerHTML = "";
-  const emptyOpt = document.createElement("option");
-  emptyOpt.value = "";
-  emptyOpt.textContent = "-- selecione --";
-  els.orderClient.appendChild(emptyOpt);
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "-- selecionar cliente --";
+  els.orderClient.appendChild(placeholder);
   clients.forEach(c => {
-    const o = document.createElement("option");
-    o.value = c.id;
-    o.textContent = `${c.name} ${c.phone ? " — " + c.phone : ""}`;
-    els.orderClient.appendChild(o);
+    const opt = document.createElement("option");
+    opt.value = c.id;
+    opt.textContent = `${c.name}${c.phone ? " — " + c.phone : ""}`;
+    els.orderClient.appendChild(opt);
   });
 }
 
-function renderOrderItemsUI() {
-  // when opening/creating order, this will be called to fill items container with product list + qty controls
-  // We'll just show a list of products with add buttons
-  els.orderItemsContainer.innerHTML = "";
-  if (!products.length) {
-    const div = document.createElement("div");
-    div.textContent = "Nenhum produto cadastrado. Adicione produtos no painel de produtos.";
-    els.orderItemsContainer.appendChild(div);
-    return;
-  }
-  products.forEach(p => {
-    const row = document.createElement("div");
-    row.className = "order-item-row";
-    row.innerHTML = `
-      <label style="display:flex;gap:8px;align-items:center">
-        <input type="checkbox" class="order-item-ck" data-id="${p.id}">
-        <div style="min-width:120px">
-          <div style="font-weight:600">${escapeHtml(p.name)}</div>
-          <div style="font-size:0.85rem;color:var(--muted)">R$ ${moneyFormat(p.price)}</div>
-        </div>
-        <input type="number" class="order-item-qty" data-id="${p.id}" value="1" min="1" style="width:70px;margin-left:auto">
-      </label>
-    `;
-    els.orderItemsContainer.appendChild(row);
-  });
-  // bind events
-  Array.from(els.orderItemsContainer.querySelectorAll(".order-item-ck")).forEach(ck => ck.addEventListener("change", onOrderItemsChange));
-  Array.from(els.orderItemsContainer.querySelectorAll(".order-item-qty")).forEach(q => q.addEventListener("input", onOrderItemsChange));
-}
-
-function onOrderItemsChange() {
-  calculateOrderTotalFromUI();
-  formDirty = true;
-}
-
-function addCustomItemToOrderUI() {
-  const name = prompt("Nome do item:");
-  if (!name) return;
-  const priceRaw = prompt("Preço do item (ex: 19.90):", "0.00");
-  if (priceRaw === null) return;
-  const price = parseFloat(priceRaw.replace(",", ".") || "0");
-  if (isNaN(price)) { alert("Preço inválido."); return; }
-  // create an item-row visually (not saved as product)
-  const row = document.createElement("div");
-  row.className = "order-custom-item";
-  const localId = uid("citem_");
-  row.innerHTML = `
-    <label style="display:flex;gap:8px;align-items:center">
-      <input type="checkbox" class="order-custom-item-ck" data-id="${localId}" checked>
-      <div style="min-width:120px">
-        <div style="font-weight:600">${escapeHtml(name)}</div>
-        <div style="font-size:0.85rem;color:var(--muted)">R$ ${moneyFormat(price)}</div>
-      </div>
-      <input type="number" class="order-custom-item-qty" data-id="${localId}" value="1" min="1" style="width:70px;margin-left:auto">
-      <input type="hidden" class="order-custom-item-price" data-id="${localId}" value="${price}">
-      <input type="hidden" class="order-custom-item-name" data-id="${localId}" value="${escapeHtml(name)}">
-      <button type="button" class="btn ghost remove-custom-item">Remover</button>
-    </label>
-  `;
-  els.orderItemsContainer.appendChild(row);
-  row.querySelector(".remove-custom-item").addEventListener("click", () => {
-    row.remove();
-    calculateOrderTotalFromUI();
-  });
-  Array.from(row.querySelectorAll("input")).forEach(i => i.addEventListener("input", () => { calculateOrderTotalFromUI(); formDirty = true; }));
-  calculateOrderTotalFromUI();
-}
-
-/* ------------------------
-   Order save / edit / delete
-   ------------------------ */
-function openOrderModalForCreate() {
-  resetOrderForm();
-  renderOrderItemsUI();
-  els.orderDate.value = selectedDate;
-  els.orderTime.value = currentTimeForNow();
-  els.deleteOrderBtn.hidden = true;
-  toggleModal(els.orderModalBackdrop, true);
-  formDirty = false;
-}
-
-function openOrderModalForEdit(orderId) {
-  const o = orders.find(x => x.id === orderId);
-  if (!o) return alert("Pedido não encontrado");
-  resetOrderForm();
-  renderOrderItemsUI();
-  // fill fields
-  els.orderDate.value = o.date;
-  els.orderTime.value = o.time;
-  els.paymentMethod.value = o.paymentMethod || "dinheiro";
-  els.orderPaid.checked = !!o.paid;
-  els.orderId.value = o.id;
-  // set client selection if client exists
-  if (o.clientId && clients.find(c=>c.id===o.clientId)) {
-    els.orderClient.value = o.clientId;
-  } else {
-    // if clientName text only, create a temporary option
-    if (o.clientName) {
-      const tempOption = document.createElement("option");
-      tempOption.value = "";
-      tempOption.textContent = `${o.clientName} ${o.clientPhone ? ' — ' + o.clientPhone : ''}`;
-      tempOption.selected = true;
-      els.orderClient.insertBefore(tempOption, els.orderClient.firstChild);
-      els.orderClient.value = "";
-    }
-  }
-  // check items - for product items, check corresponding checkbox and qty
-  // wait a tick in case orderItemsContainer still rendering
-  setTimeout(() => {
-    // mark product items
-    (o.items || []).forEach(it => {
-      // product id?
-      if (it.id && it.id.startsWith("prod_")) {
-        const ck = els.orderItemsContainer.querySelector(`.order-item-ck[data-id="${it.id}"]`);
-        const q = els.orderItemsContainer.querySelector(`.order-item-qty[data-id="${it.id}"]`);
-        if (ck) ck.checked = true;
-        if (q) q.value = it.qty || 1;
-      } else {
-        // custom items: add visually
-        const row = document.createElement("div");
-        row.className = "order-custom-item";
-        const localId = uid("citem_");
-        row.innerHTML = `
-          <label style="display:flex;gap:8px;align-items:center">
-            <input type="checkbox" class="order-custom-item-ck" data-id="${localId}" checked>
-            <div style="min-width:120px">
-              <div style="font-weight:600">${escapeHtml(it.name)}</div>
-              <div style="font-size:0.85rem;color:var(--muted)">R$ ${moneyFormat(it.price)}</div>
-            </div>
-            <input type="number" class="order-custom-item-qty" data-id="${localId}" value="${it.qty||1}" min="1" style="width:70px;margin-left:auto">
-            <input type="hidden" class="order-custom-item-price" data-id="${localId}" value="${it.price}">
-            <input type="hidden" class="order-custom-item-name" data-id="${localId}" value="${escapeHtml(it.name)}">
-            <button type="button" class="btn ghost remove-custom-item">Remover</button>
-          </label>
-        `;
-        els.orderItemsContainer.appendChild(row);
-        row.querySelector(".remove-custom-item").addEventListener("click", () => {
-          row.remove();
-          calculateOrderTotalFromUI();
-        });
-      }
-    });
-    calculateOrderTotalFromUI();
-  }, 80);
-
-  toggleModal(els.orderModalBackdrop, true);
-  els.deleteOrderBtn.hidden = false;
-  els.deleteOrderBtn.onclick = function() {
-    if (!confirm("Excluir pedido? Essa ação não pode ser desfeita.")) return;
-    orders = orders.filter(x => x.id !== o.id);
-    saveAll();
-    renderOrdersList();
-    closeOrderModal();
-  };
-  formDirty = false;
-}
-
-/* Save order read from UI fields */
-function saveOrderFromForm() {
-  // read selected items
-  const selectedItems = [];
-  // product items
-  Array.from(els.orderItemsContainer.querySelectorAll(".order-item-ck")).forEach(ck => {
-    if (ck.checked) {
-      const id = ck.dataset.id;
-      const prod = products.find(p => p.id === id);
-      if (prod) {
-        const qtyInput = els.orderItemsContainer.querySelector(`.order-item-qty[data-id="${id}"]`);
-        const qty = clamp(Number(qtyInput.value||1),1,9999);
-        selectedItems.push({ id: prod.id, name: prod.name, price: Number(prod.price), qty });
-      }
-    }
-  });
-  // custom items
-  Array.from(els.orderItemsContainer.querySelectorAll(".order-custom-item-ck")).forEach(ck => {
-    if (ck.checked) {
-      const id = ck.dataset.id;
-      const qtyInput = els.orderItemsContainer.querySelector(`.order-custom-item-qty[data-id="${id}"]`);
-      const priceInput = els.orderItemsContainer.querySelector(`.order-custom-item-price[data-id="${id}"]`);
-      const nameInput = els.orderItemsContainer.querySelector(`.order-custom-item-name[data-id="${id}"]`);
-      if (!priceInput || !nameInput) return;
-      const qty = clamp(Number(qtyInput.value||1),1,9999);
-      const price = Number(priceInput.value||0);
-      const name = nameInput.value || "Item";
-      selectedItems.push({ id: uid("cprod_"), name, price, qty });
-    }
-  });
-
-  if (!selectedItems.length) { alert("Adicione pelo menos um item ao pedido."); return; }
-  const date = els.orderDate.value;
-  const time = els.orderTime.value;
-  if (!date || !time) { alert("Preencha data e horário."); return; }
-
-  const clientIdVal = els.orderClient.value;
-  let clientName = "";
-  let clientPhone = "";
-  if (clientIdVal) {
-    const c = clients.find(x => x.id === clientIdVal);
-    if (c) { clientName = c.name; clientPhone = c.phone || ""; }
-  } else {
-    // try to read first option text (temp)
-    const opt = els.orderClient.options[els.orderClient.selectedIndex];
-    if (opt) {
-      const txt = opt.textContent || "";
-      clientName = txt.split("—")[0].trim();
-    }
-  }
-
-  const total = selectedItems.reduce((s,it)=> s + (Number(it.price||0) * Number(it.qty||1)), 0);
-  const paid = !!els.orderPaid.checked;
-  const paymentMethod = els.paymentMethod.value || "dinheiro";
-  const idFromForm = els.orderId.value;
-  if (idFromForm) {
-    // update existing
-    const idx = orders.findIndex(x => x.id === idFromForm);
-    if (idx >= 0) {
-      orders[idx] = {
-        ...orders[idx],
-        date, time, items: selectedItems, clientId: clientIdVal, clientName, clientPhone, paymentMethod, total: Number(total), paid
-      };
-    }
-  } else {
-    const newOrder = {
-      id: uid("ord_"),
-      date, time, items: selectedItems, clientId: clientIdVal, clientName, clientPhone, paymentMethod, total: Number(total), paid
-    };
-    orders.push(newOrder);
-  }
-
-  saveAll();
-  renderOrdersList();
-  closeOrderModal();
-}
-
-/* ------------------------
-   Orders list rendering & helpers
-   ------------------------ */
-function renderOrdersList() {
-  const search = (els.ordersSearch.value || "").toLowerCase().trim();
-  const sortDir = els.sortDirection.value || "desc";
-  const list = orders.filter(o => o.date === selectedDate);
-  // filter by search
-  const filtered = list.filter(o => {
-    if (!search) return true;
-    const hay = `${o.clientName || ""} ${o.clientPhone||""} ${ (o.items||[]).map(i=>i.name).join(" ") }`.toLowerCase();
-    return hay.includes(search);
-  });
-  // sort by time HH:MM
-  filtered.sort((a,b) => {
-    if (!a.time) return -1;
-    if (!b.time) return 1;
-    const ta = a.time.split(":").map(Number);
-    const tb = b.time.split(":").map(Number);
-    const va = ta[0]*60 + (ta[1]||0);
-    const vb = tb[0]*60 + (tb[1]||0);
-    return sortDir === "asc" ? va - vb : vb - va;
-  });
-
+function renderOrdersList(){
   els.ordersList.innerHTML = "";
-  if (!filtered.length) {
+  const q = (els.ordersSearch && els.ordersSearch.value || "").toLowerCase().trim();
+  const sortDir = (els.sortDirection && els.sortDirection.value) || "desc";
+
+  let filtered = orders.slice();
+
+  // filtrar por data selecionada
+  if (selectedDate) filtered = filtered.filter(o => (o.date || todayISO()) === selectedDate);
+
+  // busca livre (cliente nome, telefone, itens)
+  if (q){
+    filtered = filtered.filter(o => {
+      const client = clients.find(c=>c.id === o.clientId) || {};
+      const clientName = (client.name||"").toLowerCase();
+      const clientPhone = (client.phone||"").toLowerCase();
+      const itemsText = (o.items||[]).map(it => (it.name||"")).join(" ").toLowerCase();
+      return clientName.includes(q) || clientPhone.includes(q) || itemsText.includes(q) || String(o.total||"").includes(q);
+    });
+  }
+
+  // ordenar
+  filtered.sort((a,b)=>{
+    const ka = `${a.date} ${a.time||""}`;
+    const kb = `${b.date} ${b.time||""}`;
+    if (sortDir === "asc") return ka.localeCompare(kb);
+    return kb.localeCompare(ka);
+  });
+
+  if (!filtered.length){
     els.emptyState.hidden = false;
-    els.ordersList.innerHTML = "";
     return;
   } else {
     els.emptyState.hidden = true;
   }
 
-  filtered.forEach(o => {
-    const tpl = els.orderCardTemplate.content.cloneNode(true);
-    const art = tpl.querySelector("article");
-    art.dataset.orderId = o.id;
-    tpl.querySelector(".order-time").textContent = o.time || "";
-    tpl.querySelector(".order-client").textContent = o.clientName || "—";
-    tpl.querySelector(".order-items-count").textContent = `${(o.items||[]).length} itens`;
-    tpl.querySelector(".order-phone").textContent = o.clientPhone || "";
-    tpl.querySelector(".order-value").textContent = moneyFormat(o.total || 0);
-    // actions
-    const editBtn = tpl.querySelector(".edit-order-btn");
-    const delBtn = tpl.querySelector(".delete-order-btn");
-    editBtn.addEventListener("click", () => openOrderModalForEdit(o.id));
-    delBtn.addEventListener("click", () => {
+  filtered.forEach(o=>{
+    const template = document.importNode(document.getElementById("orderCardTemplate").content, true);
+    const article = template.querySelector(".order-card");
+    article.dataset.orderId = o.id;
+    template.querySelector(".order-time").textContent = `${o.time || "--:--"}`;
+    const client = clients.find(c=>c.id === o.clientId) || { name: "Cliente não encontrado", phone: "" };
+    template.querySelector(".order-client").textContent = client.name || "—";
+    template.querySelector(".order-items-count").textContent = `${(o.items||[]).length} itens`;
+    template.querySelector(".order-phone").textContent = client.phone || "";
+    template.querySelector(".order-value").textContent = moneyFormat(o.total || 0);
+
+    const editBtn = template.querySelector(".edit-order-btn");
+    const delBtn = template.querySelector(".delete-order-btn");
+    editBtn.addEventListener("click", ()=> openOrderForEdit(o.id));
+    delBtn.addEventListener("click", ()=> {
       if (!confirm("Excluir pedido?")) return;
+      // delete local
       orders = orders.filter(x => x.id !== o.id);
-      saveAll();
+      saveAllLocal();
+      // delete remote
+      if (firebaseApi) firebaseApi.delete("orders", o.id).catch(e=>console.warn("firebase delete order", e));
       renderOrdersList();
     });
-    els.ordersList.appendChild(tpl);
+
+    els.ordersList.appendChild(template);
   });
 }
 
-/* ------------------------
-   Calendar rendering (simple month view)
-   ------------------------ */
-function renderCalendar() {
-  // render a simple month grid showing current month; clicking a day sets selectedDate.
-  const base = new Date(selectedDate);
-  const year = base.getFullYear();
-  const month = base.getMonth();
-  const firstDay = new Date(year, month, 1);
-  const startWeekday = firstDay.getDay(); // 0=Sun
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-
-  // header
-  els.calendar.innerHTML = "";
-  const head = document.createElement("div");
-  head.style.display = "flex";
-  head.style.justifyContent = "space-between";
-  head.style.alignItems = "center";
-  head.style.marginBottom = "8px";
-  head.innerHTML = `<div style="font-weight:700">${firstDay.toLocaleString('pt-BR',{month:'long', year:'numeric'})}</div>
-    <div style="display:flex;gap:6px">
-      <button class="btn ghost" id="calPrevMonth">◀</button>
-      <button class="btn ghost" id="calNextMonth">▶</button>
-    </div>`;
-  els.calendar.appendChild(head);
-
-  // grid
-  const grid = document.createElement("div");
-  grid.style.display = "grid";
-  grid.style.gridTemplateColumns = "repeat(7,1fr)";
-  grid.style.gap = "6px";
-
-  // weekdays header
-  const weekDays = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
-  weekDays.forEach(w => {
-    const wdiv = document.createElement("div");
-    wdiv.style.textAlign = "center";
-    wdiv.style.fontSize = "0.85rem";
-    wdiv.style.color = "var(--muted)";
-    wdiv.textContent = w;
-    grid.appendChild(wdiv);
-  });
-
-  // fill blanks
-  for (let i=0;i<startWeekday;i++) {
-    const cell = document.createElement("div");
-    grid.appendChild(cell);
-  }
-  // days
-  for (let d=1; d<=daysInMonth; d++) {
-    const cell = document.createElement("button");
-    cell.className = "cal-day";
-    const iso = `${year}-${String(month+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
-    cell.dataset.iso = iso;
-    cell.textContent = d;
-    cell.style.padding = "8px";
-    cell.style.borderRadius = "8px";
-    cell.style.border = "none";
-    cell.style.cursor = "pointer";
-    // highlight selected
-    if (iso === selectedDate) {
-      cell.style.background = "rgba(0,193,106,0.16)";
-      cell.style.fontWeight = "700";
-    }
-    // show if has orders: small dot
-    const has = orders.some(o => o.date === iso);
-    if (has) {
-      const dot = document.createElement("div");
-      dot.style.width = "6px";
-      dot.style.height = "6px";
-      dot.style.borderRadius = "50%";
-      dot.style.background = "var(--accent)";
-      dot.style.marginTop = "6px";
-      dot.style.marginLeft = "auto";
-      dot.style.marginRight = "auto";
-      cell.appendChild(dot);
-      cell.style.display = "flex";
-      cell.style.flexDirection = "column";
-      cell.style.alignItems = "center";
-    }
-
-    cell.addEventListener("click", () => setSelectedDate(iso));
-    grid.appendChild(cell);
-  }
-
-  els.calendar.appendChild(grid);
-
-  // navigation months
-  document.getElementById("calPrevMonth").addEventListener("click", () => {
-    const newMonth = new Date(year, month-1, 1);
-    const iso = newMonth.toISOString().slice(0,10);
-    selectedDate = iso; renderCalendar(); renderOrdersList(); updateCurrentLabels();
-  });
-  document.getElementById("calNextMonth").addEventListener("click", () => {
-    const newMonth = new Date(year, month+1, 1);
-    const iso = newMonth.toISOString().slice(0,10);
-    selectedDate = iso; renderCalendar(); renderOrdersList(); updateCurrentLabels();
-  });
+/////////////////////// CALENDÁRIO SIMPLES ///////////////////////
+function renderCalendar(){
+  if (!els.calendar) return;
+  els.calendar.innerHTML = `<div style="font-size:0.95rem;color:var(--muted)">Seleciona o dia acima — use os botões</div>`;
 }
-
-/* change selected date by offset in days */
-function changeSelectedDate(deltaDays) {
-  const d = new Date(selectedDate);
-  d.setDate(d.getDate() + deltaDays);
-  selectedDate = d.toISOString().slice(0,10);
-  setSelectedDate(selectedDate);
-}
-
-function setSelectedDate(iso) {
-  selectedDate = iso;
-  renderCalendar();
+function setSelectedDate(d){
+  selectedDate = d;
+  if (els.ordersDayLabel) els.ordersDayLabel.textContent = d;
   renderOrdersList();
-  updateCurrentLabels();
+}
+function changeSelectedDate(days){
+  const dt = new Date(selectedDate || todayISO());
+  dt.setDate(dt.getDate() + days);
+  setSelectedDate(dt.toISOString().slice(0,10));
 }
 
-/* ------------------------
-   Helpers: UI labels and time helpers
-   ------------------------ */
-function updateCurrentLabels() {
-  els.ordersDayLabel.textContent = (new Date(selectedDate)).toLocaleDateString();
-  els.currentDayLabel.textContent = `Mostrando: ${(new Date(selectedDate)).toLocaleDateString()}`;
+/////////////////////// PEDIDOS: UI DO FORM ///////////////////////
+function openOrderModalForCreate(){
+  resetOrderForm();
+  els.orderDate.value = selectedDate || todayISO();
+  toggleModal(els.orderModalBackdrop, true);
+  els.deleteOrderBtn.hidden = true;
+}
+function openOrderForEdit(orderId){
+  const o = orders.find(x=>x.id === orderId);
+  if (!o) return alert("Pedido não encontrado.");
+  toggleModal(els.orderModalBackdrop, true);
+  els.orderId.value = o.id;
+  els.orderDate.value = o.date || todayISO();
+  els.orderTime.value = o.time || "";
+  els.orderClient.value = o.clientId || "";
+  els.paymentMethod.value = o.paymentMethod || "dinheiro";
+  els.orderPaid.checked = !!o.paid;
+  els.orderItemsContainer.innerHTML = "";
+  (o.items||[]).forEach(it => addItemRowToOrderUI(it));
+  calculateOrderTotal();
+  els.deleteOrderBtn.hidden = false;
+  // bind delete button
+  els.deleteOrderBtn.onclick = () => {
+    if (!confirm("Excluir pedido?")) return;
+    // local
+    orders = orders.filter(x=>x.id !== o.id);
+    saveAllLocal();
+    // remote
+    if (firebaseApi) firebaseApi.delete("orders", o.id).catch(e=>console.warn("firebase delete order", e));
+    closeOrderModal();
+    renderOrdersList();
+  };
 }
 
-function currentTimeForNow() {
-  const d = new Date();
-  const hh = String(d.getHours()).padStart(2,"0");
-  const mm = String(d.getMinutes()).padStart(2,"0");
-  return `${hh}:${mm}`;
+function addCustomItemToOrderUI(){
+  const custom = { id: uid("item_"), name: "Item personalizado", qty: 1, price: 0 };
+  addItemRowToOrderUI(custom, true);
 }
+function addItemRowToOrderUI(item, focusPrice=false){
+  const row = document.createElement("div");
+  row.className = "order-item-row";
+  row.style.display = "flex";
+  row.style.gap = "8px";
+  row.style.alignItems = "center";
+  row.style.marginBottom = "8px";
 
-/* ------------------------
-   Order total calculation
-   ------------------------ */
-function calculateOrderTotalFromUI() {
-  let total = 0;
-  // product items
-  Array.from(els.orderItemsContainer.querySelectorAll(".order-item-ck")).forEach(ck => {
-    if (ck.checked) {
-      const id = ck.dataset.id;
-      const prod = products.find(p => p.id === id);
-      if (prod) {
-        const q = els.orderItemsContainer.querySelector(`.order-item-qty[data-id="${id}"]`);
-        const qty = clamp(Number(q.value||1),1,9999);
-        total += Number(prod.price) * qty;
-      }
-    }
+  const name = document.createElement("input");
+  name.value = item.name || "";
+  name.placeholder = "Nome do item";
+  name.style.flex = "1";
+
+  const qty = document.createElement("input");
+  qty.type = "number";
+  qty.value = item.qty || 1;
+  qty.style.width = "80px";
+
+  const price = document.createElement("input");
+  price.type = "number";
+  price.step = "0.01";
+  price.value = moneyFormat(item.price || 0);
+  price.style.width = "110px";
+
+  const remove = document.createElement("button");
+  remove.className = "btn ghost small";
+  remove.type = "button";
+  remove.textContent = "Remover";
+
+  remove.addEventListener("click", ()=> {
+    row.remove();
+    calculateOrderTotal();
   });
-  // custom items
-  Array.from(els.orderItemsContainer.querySelectorAll(".order-custom-item-ck")).forEach(ck => {
-    if (ck.checked) {
-      const id = ck.dataset.id;
-      const p = els.orderItemsContainer.querySelector(`.order-custom-item-price[data-id="${id}"]`);
-      const q = els.orderItemsContainer.querySelector(`.order-custom-item-qty[data-id="${id}"]`);
-      if (!p) return;
-      const price = Number(p.value || 0);
-      const qty = clamp(Number(q.value||1),1,9999);
-      total += price * qty;
-    }
+
+  [name, qty, price].forEach(inp => inp.addEventListener("input", ()=> calculateOrderTotal()));
+
+  row.appendChild(name); row.appendChild(qty); row.appendChild(price); row.appendChild(remove);
+  els.orderItemsContainer.appendChild(row);
+  if (focusPrice) price.focus();
+}
+
+function calculateOrderTotal(){
+  const rows = Array.from(els.orderItemsContainer.children || []);
+  let total = 0;
+  const items = [];
+  rows.forEach(r => {
+    const inputs = r.querySelectorAll("input");
+    const nm = inputs[0].value || "";
+    const q = Number(inputs[1].value || 0);
+    const p = Number(inputs[2].value || 0);
+    total += q * p;
+    items.push({ id: uid("item_"), name: nm, qty: q, price: p });
   });
   els.orderTotal.value = moneyFormat(total);
+  return { total, items };
 }
 
-/* ------------------------
-   Utility: escape HTML
-   ------------------------ */
-function escapeHtml(str) {
-  return String(str || "").replace(/[&<>"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'})[m]; });
+/////////////////////// SALVAR / EDITAR PEDIDO ///////////////////////
+async function saveOrderFromForm(){
+  const date = els.orderDate.value || todayISO();
+  const time = els.orderTime.value || "";
+  const clientId = els.orderClient.value || "";
+  const paymentMethod = els.paymentMethod.value || "dinheiro";
+  const paid = !!els.orderPaid.checked;
+  const orderId = els.orderId.value || uid("order_");
+
+  const calc = calculateOrderTotal();
+  const total = Number(calc.total || 0);
+  const items = calc.items;
+
+  const payload = { date, time, clientId, paymentMethod, paid, total, items, updatedAt: new Date().toISOString() };
+
+  // grava local
+  const idx = orders.findIndex(o => o.id === orderId);
+  if (idx >= 0) {
+    orders[idx] = { id: orderId, ...payload };
+  } else {
+    orders.push({ id: orderId, ...payload });
+  }
+  saveAllLocal();
+
+  // grava remoto (Firestore) se disponível
+  try {
+    if (firebaseApi) {
+      // se o doc já existe no remote com mesmo id, fazemos set; caso contrário, usamos set (overwrite)
+      await firebaseApi.set("orders", orderId, { ...payload, createdAt: new Date().toISOString() });
+    }
+  } catch(e) {
+    console.warn("firebase save order failed:", e);
+  }
+
+  closeOrderModal();
+  renderOrdersList();
+  formDirty = false;
 }
 
-/* ------------------------
-   Misc: open product for edit
-   ------------------------ */
-function openProductForEdit(id) {
-  const p = products.find(x => x.id === id);
-  if (!p) return;
-  els.productName.value = p.name;
-  els.productPrice.value = moneyFormat(p.price);
-  els.productId.value = p.id;
+/////////////////////// PRODUTOS CRUD ///////////////////////
+function openProductForEdit(id){
+  const p = products.find(x => x.id === id); if(!p) return;
+  els.productName.value = p.name; els.productPrice.value = p.price; els.productId.value = p.id;
   toggleModal(els.productsModalBackdrop, true);
 }
+function closeProductsModal(){ toggleModal(els.productsModalBackdrop, false); els.productForm.reset(); els.productId.value = ""; }
 
-/* ------------------------
-   Close modals helpers
-   ------------------------ */
-function closeProductsModal() {
+async function saveProductFromForm(){
+  const name = (els.productName.value || "").trim();
+  const price = Number(els.productPrice.value || 0);
+  if (!name) return alert("Preencha um nome válido.");
+  const id = els.productId.value || uid("prod_");
+  const obj = { id, name, price };
+
+  const idx = products.findIndex(p => p.id === id);
+  if (idx >= 0) products[idx] = obj; else products.push(obj);
+  saveAllLocal();
+
+  // remoto
+  try {
+    if (firebaseApi) {
+      await firebaseApi.set("products", id, { name, price });
+    }
+  } catch(e){ console.warn("firebase save product failed", e); }
+
+  renderProductsListUI();
+  renderClientsOptions();
+  toggleModal(els.productsModalBackdrop, false);
   els.productForm.reset();
   els.productId.value = "";
-  toggleModal(els.productsModalBackdrop, false);
+  renderOrderItemsUI();
 }
-function closeClientsModal() {
+
+/////////////////////// CLIENTES CRUD ///////////////////////
+function openClientForEdit(id){
+  const c = clients.find(x=>x.id === id); if(!c) return;
+  els.clientName.value = c.name; els.clientPhone.value = c.phone; els.clientId.value = c.id;
+  toggleModal(els.clientsModalBackdrop, true);
+}
+function closeClientsModal(){ toggleModal(els.clientsModalBackdrop, false); els.clientForm.reset(); els.clientId.value = ""; }
+
+async function saveClientFromForm(){
+  const name = (els.clientName.value || "").trim();
+  const phone = (els.clientPhone.value || "").trim();
+  if (!name) return alert("Preencha o nome do cliente.");
+  const id = els.clientId.value || uid("cli_");
+  const obj = { id, name, phone };
+
+  const idx = clients.findIndex(c => c.id === id);
+  if (idx >= 0) clients[idx] = obj; else clients.push(obj);
+  saveAllLocal();
+
+  // remoto
+  try {
+    if (firebaseApi) {
+      await firebaseApi.set("clients", id, { name, phone });
+    }
+  } catch(e){ console.warn("firebase save client failed", e); }
+
+  renderClientsListUI();
+  renderClientsOptions();
+  toggleModal(els.clientsModalBackdrop, false);
   els.clientForm.reset();
   els.clientId.value = "";
-  toggleModal(els.clientsModalBackdrop, false);
+  renderOrdersList();
 }
 
-/* ------------------------
-   Small helper: render clients options again on demand
-   ------------------------ */
-function renderClientsOptions() {
-  // already implemented earlier; re-run to refresh
-  const sel = document.getElementById("orderClient");
-  if (!sel) return;
-  sel.innerHTML = "";
-  const empty = document.createElement("option");
-  empty.value = "";
-  empty.textContent = "-- selecione --";
-  sel.appendChild(empty);
-  clients.forEach(c => {
-    const o = document.createElement("option");
-    o.value = c.id;
-    o.textContent = `${c.name}${c.phone ? " — " + c.phone : ""}`;
-    sel.appendChild(o);
-  });
+/////////////////////// OUTRAS HELPERS ///////////////////////
+function renderOrderItemsUI(){
+  // Atualiza UI caso algum produto tenha mudado (não implementa seleção avançada aqui)
+  // Foi mantido placeholder pra futuras melhorias
 }
 
-/* ------------------------
-   Init load
-   ------------------------ */
-document.addEventListener("DOMContentLoaded", () => {
-  init();
-});
+/////////////////////// FINAL SETUP ///////////////////////
+bindUI(); // liga listeners estáticos
+
+// agora export (opcional)
+window.APP = {
+  reloadLocal: () => { loadAllLocal(); renderProductsListUI(); renderClientsListUI(); renderOrdersList(); },
+  firebaseStatus: () => !!firebaseApi
+};

@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Gerenciador de Pedidos</title>
+  <title>Gerenciador — Clientes / Produtos / Pedidos</title>
 
-  <!-- Link do CSS externo -->
+  <!-- Link do CSS -->
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -28,7 +28,7 @@
   <header id="appHeader">
     <div class="brand">
       <div class="brand-text">
-        <h1 id="appTitle">Gerenciador de Pedidos</h1>
+        <h1 id="appTitle">Gerenciador — Clientes / Produtos / Pedidos</h1>
         <div id="currentDayLabel" class="subtitle" aria-live="polite">Dia atual</div>
       </div>
     </div>
@@ -37,6 +37,7 @@
       <button id="openAddOrderBtn" class="btn" aria-haspopup="dialog">Adicionar pedido</button>
       <button id="openProductsBtn" class="btn ghost">Produtos</button>
       <button id="openClientsBtn" class="btn ghost">Clientes</button>
+
       <div class="sort-controls">
         <label for="sortDirection">Ordenar:</label>
         <select id="sortDirection" name="sortDirection" aria-label="Ordenar">
@@ -44,11 +45,15 @@
           <option value="asc">Mais antigos</option>
         </select>
       </div>
+
+      <div class="search-controls">
+        <input type="search" id="ordersSearch" placeholder="Pesquisar pedidos (cliente, telefone, itens...)" aria-label="Pesquisar pedidos">
+      </div>
     </div>
   </header>
 
   <main class="container" id="mainApp" tabindex="-1">
-    <!-- AREA DO CALENDÁRIO -->
+    <!-- CALENDÁRIO SIMPLES -->
     <section id="calendarArea" class="calendar">
       <h2>Calendário</h2>
       <div id="calendar"></div>
@@ -59,17 +64,15 @@
       </div>
     </section>
 
-    <!-- AREA DE PEDIDOS -->
+    <!-- LISTA DE PEDIDOS -->
     <section id="ordersArea" class="orders-panel">
       <div class="orders-header">
         <h2 id="ordersTitle">Pedidos — <span id="ordersDayLabel">Hoje</span></h2>
-        <div class="orders-controls">
-          <input type="search" id="ordersSearch" placeholder="Pesquisar pedidos" aria-label="Pesquisar pedidos">
-        </div>
+        <div class="orders-controls"></div>
       </div>
 
       <div id="ordersList" class="orders-list" aria-live="polite">
-        <!-- Pedidos renderizados via JS -->
+        <!-- Pedidos via JS -->
       </div>
 
       <div id="emptyState" class="empty-state" hidden>
@@ -81,7 +84,7 @@
   <!-- MODAL DE PEDIDOS -->
   <div id="orderModalBackdrop" class="modal-backdrop" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="orderModalTitle">
-      <h2 id="orderModalTitle">Adicionar Pedido</h2>
+      <h2 id="orderModalTitle">Adicionar / Editar Pedido</h2>
       <form id="orderForm">
         <fieldset>
           <label for="orderDate">Data</label>
@@ -94,12 +97,14 @@
           <div class="client-select-row">
             <select id="orderClient" name="client" required></select>
             <button type="button" id="addClientQuickBtn" class="btn ghost">+ Cliente</button>
+            <button type="button" id="showClientsListBtn" class="btn ghost">Lista clientes</button>
           </div>
 
           <label for="orderItems">Itens do pedido</label>
           <div id="orderItemsContainer"></div>
           <div class="items-actions">
             <button type="button" id="openProductsFromOrderBtn" class="btn ghost">Gerenciar produtos</button>
+            <button type="button" id="showProductsListBtn" class="btn ghost">Lista produtos</button>
             <button type="button" id="addCustomItemBtn" class="btn ghost">Adicionar item</button>
           </div>
 
@@ -134,7 +139,7 @@
     <div class="modal">
       <h2>Produtos</h2>
       <form id="productForm">
-        <label for="productName">Nome do produto</label>
+        <label for="productName">Nome</label>
         <input type="text" id="productName" required>
 
         <label for="productPrice">Valor</label>
@@ -146,6 +151,7 @@
           <button type="button" id="cancelProductBtn" class="btn ghost">Cancelar</button>
         </div>
       </form>
+
       <hr>
       <div id="productsList" class="list"></div>
     </div>
@@ -168,12 +174,13 @@
           <button type="button" id="cancelClientBtn" class="btn ghost">Cancelar</button>
         </div>
       </form>
+
       <hr>
       <div id="clientsList" class="list"></div>
     </div>
   </div>
 
-  <!-- Template de pedido -->
+  <!-- TEMPLATES -->
   <template id="orderCardTemplate">
     <article class="order-card" data-order-id="">
       <div class="order-left">

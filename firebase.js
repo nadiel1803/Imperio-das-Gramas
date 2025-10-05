@@ -1,21 +1,18 @@
-/**************************************************
- * firebase.js - integração opcional (template)
+/**
+ * firebase.js
+ * - Inicializa Firebase Firestore (SDK modular via CDN)
+ * - NÃO usa Auth (não há signInAnonymously)
+ * - Expõe em window.firebaseApi a API:
+ *    - onCollectionSnapshot(collectionName, callback) -> retorna unsubscribe()
+ *    - add(collectionName, data) -> Promise(docRef)
+ *    - set(collectionName, id, data) -> Promise()
+ *    - update(collectionName, id, data) -> Promise()
+ *    - delete(collectionName, id) -> Promise()
+ *    - getAll(collectionName) -> Promise(arrayDocs)
  *
- * COMO USAR:
- * 1) Cole o SDK do Firebase no seu HTML (opcional) ou carregue via módulos.
- *    Exemplo snippet classic (script tags) — adicione no seu index.html
- *      <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
- *      <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
- *
- * 2) Substitua o objeto firebaseConfig abaixo pelos valores do seu projeto Firebase.
- *
- * 3) Se quiser sincronizar automaticamente, implemente window.firebaseSync = function(data) { ... }
- *    Eu já deixei uma função exemplo que tenta escrever em Firestore (comentada). Use com cuidado.
- *
- * NOTA: o app funciona 100% com localStorage sem necessidade de Firebase.
- **************************************************/
+ * Substitua `firebaseConfig` com os dados do seu Firebase Console (Web app).
+ */
 
-// Coloque sua configuração aqui (exemplo vazio). Substitua pelos valores do console do Firebase.
 const firebaseConfig = {
   apiKey: "AIzaSyC0g9Kxu-KbfFxGm1wpNR-KurnU_1arpAk",
   authDomain: "imperio-das-gramas.firebaseapp.com",
@@ -25,59 +22,88 @@ const firebaseConfig = {
   appId: "1:750713878247:web:0c623fa465fef44be35442",
 };
 
-// Inicializa Firebase somente se o config estiver preenchido (evita erros se não usar)
-window.initFirebase = function() {
-  try {
-    if (!firebaseConfig || !firebaseConfig.apiKey) {
-      console.warn("Firebase não configurado (firebaseConfig vazio). Ignorando inicialização.");
-      return;
-    }
-    if (!window.firebase) {
-      console.warn("SDK do Firebase não encontrado. Adicione os scripts do Firebase no index.html para usar.");
-      return;
-    }
-    // Se estiver usando compat SDK
-    if (!window._gp_firebase_initialized) {
-      window.firebaseApp = firebase.initializeApp(firebaseConfig);
-      window.firestore = firebase.firestore();
-      window._gp_firebase_initialized = true;
-      console.log("Firebase inicializado (compat).");
-    }
-  } catch (e) {
-    console.error("Erro ao inicializar Firebase:", e);
-  }
-};
+(function () {
+  if (window.firebaseApi) return; // já inicializado
 
-/* 
-  Exemplo de função opcional para sincronizar dados para Firestore.
-  ATENÇÃO: é só um exemplo. Não chame automaticamente se não quiser gravação remota.
-  Se quiser ativar, descomente e ajuste a lógica conforme necessidade.
-*/
-window.firebaseSync = function(data) {
-  // data = { products, clients, orders }
-  // Só tenta se firestore existir
-  if (!window.firestore) {
-    // nada a fazer
-    return;
-  }
-  try {
-    // exemplo simples: grava documento único por usuário/instância com timestamp
-    const docRef = window.firestore.collection("gerenciador_pedidos_backup").doc("instancia_default");
-    const payload = {
-      updatedAt: new Date(),
-      products: data.products || [],
-      clients: data.clients || [],
-      orders: data.orders || []
+  let firebaseApp = null;
+  let db = null;
+  const VERSION = "10.6.1"; // versão do SDK via CDN (pode ajustar)
+  const BASE = `https://www.gstatic.com/firebasejs/${VERSION}`;
+
+  async function initFirebase() {
+    if (firebaseApp && db && window.firebaseApi) return window.firebaseApi;
+    if (!firebaseConfig || Object.keys(firebaseConfig).length === 0) {
+      throw new Error("firebaseConfig vazio em firebase.js — cole seu config do Firebase Console");
+    }
+
+    // importa modular SDK via dynamic import
+    const appMod = await import(`${BASE}/firebase-app.js`);
+    const firestoreMod = await import(`${BASE}/firebase-firestore.js`);
+
+    const { initializeApp } = appMod;
+    const {
+      getFirestore,
+      collection,
+      doc,
+      addDoc,
+      setDoc,
+      updateDoc,
+      deleteDoc,
+      onSnapshot,
+      getDocs
+    } = firestoreMod;
+
+    firebaseApp = initializeApp(firebaseConfig);
+    db = getFirestore(firebaseApp);
+
+    // Monta a API que o app espera
+    window.firebaseApi = {
+      _internal: { db },
+
+      // recebe callback(snapshots) e retorna unsubscribe
+      onCollectionSnapshot: (collectionName, cb) => {
+        const colRef = collection(db, collectionName);
+        const unsub = onSnapshot(colRef, snapshot => {
+          // transforma snapshot em array simples
+          const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+          try { cb(null, docs); } catch (e) { console.error("firebaseApi callback error:", e); }
+        }, err => {
+          cb(err);
+        });
+        return unsub;
+      },
+
+      add: async (collectionName, data) => {
+        const colRef = collection(db, collectionName);
+        const docRef = await addDoc(colRef, data);
+        return docRef;
+      },
+
+      set: async (collectionName, id, data) => {
+        const docRef = doc(db, collectionName, id);
+        await setDoc(docRef, data);
+      },
+
+      update: async (collectionName, id, data) => {
+        const docRef = doc(db, collectionName, id);
+        await updateDoc(docRef, data);
+      },
+
+      delete: async (collectionName, id) => {
+        const docRef = doc(db, collectionName, id);
+        await deleteDoc(docRef);
+      },
+
+      getAll: async (collectionName) => {
+        const colRef = collection(db, collectionName);
+        const snap = await getDocs(colRef);
+        return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      }
     };
-    // escreve sem overwriting de metadados
-    docRef.set(payload, { merge: true }).then(() => {
-      console.log("Backup salvo no Firestore (gerenciador_pedidos_backup/instancia_default).");
-    }).catch(err => console.error("Erro ao salvar backup Firestore:", err));
-  } catch (e) {
-    console.error("firebaseSync erro:", e);
-  }
-};
 
-/* Se preferir, você pode substituir window.firebaseSync por uma função que envie os dados via Realtime DB ou Cloud Functions. 
-   Eu deixei essa implementação simples pra você já ter um ponto de partida.
-*/
+    return window.firebaseApi;
+  }
+
+  // expõe initFirebase globalmente
+  window.initFirebase = initFirebase;
+})();
