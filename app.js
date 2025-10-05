@@ -629,7 +629,7 @@ function closeProductsModal(){ toggleModal(els.productsModalBackdrop, false); el
 async function saveProductFromForm(){
   const name = (els.productName.value || "").trim();
   const price = Number(els.productPrice.value || 0);
-  if (!name) return alert("Preencha um nome válido.");
+  // if (!name) return alert("Preencha um nome válido.");
   const id = els.productId.value || uid("prod_");
   const obj = { id, name, price };
 
